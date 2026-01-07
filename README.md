@@ -8,15 +8,3 @@
 
 ```bash
 wget -N [https://raw.githubusercontent.com/facker668/fastvps/main/optimize.sh](https://raw.githubusercontent.com/facker668/fastvps/main/optimize.sh) && chmod +x optimize.sh && ./optimize.sh
-
-
-✨ 功能清单
-[x] 自动创建智能 Swap (保护内存)
-
-[x] 修改 SSH 端口为 60000 (防暴力破解)
-
-[x] 一键安装 Docker 环境
-
-[x] 系统日志限制 (保护硬盘)
-
-[x] 自动版本更新
