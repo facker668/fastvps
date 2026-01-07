@@ -13,4 +13,4 @@
 在您的 VPS 终端（Root 用户）直接复制并运行以下命令：
 
 ```bash
-wget -N [https://raw.githubusercontent.com/facker668/fastvps/main/optimize.sh](https://raw.githubusercontent.com/facker668/fastvps/main/optimize.sh) && chmod +x optimize.sh && ./optimize.sh
+wget -N https://raw.githubusercontent.com/facker668/fastvps/main/optimize.sh && chmod +x optimize.sh && ./optimize.sh
