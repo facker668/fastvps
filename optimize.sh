@@ -4,7 +4,7 @@
 # Project: FastVPS-Pro (Fixed & Optimized)
 # Author: facker668
 # GitHub: https://github.com/facker668/fastvps
-# Version: 1.3
+# Version: 1.4
 # ====================================================
 
 RED='\033[0;31m'
@@ -13,11 +13,28 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 PLAIN='\033[0m'
 
-LOCAL_VERSION="1.3"
+LOCAL_VERSION="1.4"
 ARCH=$(uname -m)
 
 # 权限检查
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
+
+# --- 获取 BBR 状态 ---
+get_bbr_status() {
+    local status=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+    if [[ "$status" == "bbr" ]]; then
+        echo -e "${GREEN}已开启 (bbr)${PLAIN}"
+    elif [[ "$status" == "bbrv3" ]]; then
+        echo -e "${GREEN}已开启 (bbrv3)${PLAIN}"
+    else
+        echo -e "${RED}未开启 ($status)${PLAIN}"
+    fi
+}
+
+# --- 获取内核版本 ---
+get_kernel_version() {
+    uname -r
+}
 
 # --- 1. 系统初始化 ---
 func_init() {
@@ -46,16 +63,13 @@ func_bbrv3() {
     fi
 
     echo -e "${YELLOW}正在配置 XanMod 官方源...${PLAIN}"
-    # 修复：更稳妥的密钥导入方式
     curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/xanmod-archive-keyring.gpg
     echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-kernel.list
     
     apt update -y
     echo -e "${YELLOW}正在安装 XanMod v3 核心 (BBRv3)...${PLAIN}"
-    # x64v3 是目前大多数现代 VPS 兼容性最好的版本
     apt install -y linux-xanmod-x64v3
     
-    # 启用配置
     cat > /etc/sysctl.d/99-bbrv3.conf <<EOF
 net.core.default_qdisc = fq_pie
 net.ipv4.tcp_congestion_control = bbr
@@ -71,7 +85,6 @@ EOF
 func_bbr_standard() {
     echo -e "${YELLOW}正在进行 TCP 极致调优...${PLAIN}"
     
-    # 清理旧配置
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     
@@ -97,6 +110,7 @@ net.ipv4.tcp_congestion_control = bbr
 EOF
     sysctl --system
     echo -e "${GREEN}标准 BBR + TCP 调优已完成！${PLAIN}"
+    sleep 2
 }
 
 # --- 4. 修改 SSH 端口 ---
@@ -104,7 +118,6 @@ func_ssh() {
     local port=60000
     echo -e "${YELLOW}正在尝试修改 SSH 端口为 $port...${PLAIN}"
     
-    # 检查是否有防火墙，若有则尝试放行
     if command -v ufw >/dev/null 2>&1; then
         ufw allow $port/tcp
     elif command -v firewall-cmd >/dev/null 2>&1; then
@@ -115,7 +128,6 @@ func_ssh() {
     sed -i "s/^#\?Port [0-9]*/Port $port/g" /etc/ssh/sshd_config
     systemctl restart sshd
     echo -e "${GREEN}SSH 端口已修改为 $port。${PLAIN}"
-    echo -e "${YELLOW}警告：请务必不要关闭当前窗口，新开一个终端尝试连接，确保能连上再退出！${PLAIN}"
 }
 
 # --- 5. 安装 Docker ---
@@ -123,10 +135,7 @@ func_docker() {
     echo -e "${YELLOW}正在安装 Docker 环境...${PLAIN}"
     curl -fsSL https://get.docker.com | bash
     
-    # 配置镜像加速或日志限制
-    if [ ! -d "/etc/docker" ]; then
-        mkdir -p /etc/docker
-    fi
+    [ ! -d "/etc/docker" ] && mkdir -p /etc/docker
     
     cat > /etc/docker/daemon.json <<EOF
 {
@@ -139,7 +148,8 @@ func_docker() {
 EOF
     systemctl restart docker
     systemctl enable docker
-    echo -e "${GREEN}Docker 安装成功并已设置日志滚动。${PLAIN}"
+    echo -e "${GREEN}Docker 安装成功。${PLAIN}"
+    sleep 2
 }
 
 # --- 6. 智能 Swap ---
@@ -149,47 +159,59 @@ func_swap() {
         local mem=$(free -m | grep Mem | awk '{print $2}')
         local size=$((mem > 1024 ? 1024 : mem))
         
-        # 释放旧的
         swapoff -a >/dev/null 2>&1
-        
         dd if=/dev/zero of=/swapfile bs=1M count=$size
         chmod 600 /swapfile
         mkswap /swapfile
         swapon /swapfile
         
-        # 写入 fstab
         sed -i '/\/swapfile/d' /etc/fstab
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
         echo -e "${GREEN}Swap 创建成功: ${size}MB${PLAIN}"
     else
         echo -e "${BLUE}检测到系统已有 Swap，跳过。${PLAIN}"
     fi
+    sleep 2
 }
 
 # --- 菜单控制 ---
 main_menu() {
-    clear
-    echo -e "${BLUE}====================================${PLAIN}"
-    echo -e "${GREEN}    FastVPS Pro 极致管理工具 v$LOCAL_VERSION    ${PLAIN}"
-    echo -e "${BLUE}    当前架构: $ARCH    OS: Linux ${PLAIN}"
-    echo -e "${BLUE}====================================${PLAIN}"
-    echo -e "1. 🚀 安装 BBRv3 内核 (XanMod, 仅限 Debian/Ubuntu)"
-    echo -e "2. 🚀 标准 BBR 加速 + TCP 极致调优 (不需重启)"
-    echo -e "3. 🛡️ 修改 SSH 端口为 60000"
-    echo -e "4. 📦 安装 Docker 容器环境"
-    echo -e "5. 🧠 配置智能 Swap (虚拟内存)"
-    echo -e "0. 退出"
-    echo -e "${BLUE}====================================${PLAIN}"
-    read -p "选择操作 [0-5]: " choice
+    while true; do
+        clear
+        echo -e "${BLUE}====================================${PLAIN}"
+        echo -e "${GREEN}    FastVPS Pro 极致管理工具 v$LOCAL_VERSION    ${PLAIN}"
+        echo -e "${BLUE}------------------------------------${PLAIN}"
+        echo -e " 系统内核: ${YELLOW}$(get_kernel_version)${PLAIN}"
+        echo -e " BBR 状态: $(get_bbr_status)"
+        echo -e " 当前架构: ${YELLOW}$ARCH${PLAIN}"
+        echo -e "${BLUE}====================================${PLAIN}"
+        echo -e "1. 🚀 安装 BBRv3 内核 (仅限 Debian/Ubuntu)"
+        echo -e "2. 🚀 标准 BBR 加速 + TCP 极致调优"
+        echo -e "3. 🛡️ 修改 SSH 端口为 60000"
+        echo -e "4. 📦 安装 Docker 容器环境"
+        echo -e "5. 🧠 配置智能 Swap (虚拟内存)"
+        echo -e "6. 📊 查看详细内核参数报告"
+        echo -e "0. 退出"
+        echo -e "${BLUE}====================================${PLAIN}"
+        read -p "选择操作 [0-6]: " choice
 
-    case $choice in
-        1) func_init && func_bbrv3 ;;
-        2) func_init && func_bbr_standard ;;
-        3) func_ssh ;;
-        4) func_docker ;;
-        5) func_swap ;;
-        *) exit 0 ;;
-    esac
+        case $choice in
+            1) func_init && func_bbrv3 ;;
+            2) func_init && func_bbr_standard ;;
+            3) func_ssh ;;
+            4) func_docker ;;
+            5) func_swap ;;
+            6) 
+                echo -e "${YELLOW}--- 详细参数 ---${PLAIN}"
+                sysctl net.ipv4.tcp_congestion_control
+                sysctl net.core.default_qdisc
+                lsmod | grep bbr
+                read -p "按回车键返回菜单..." 
+                ;;
+            0) exit 0 ;;
+            *) echo -e "${RED}输入错误，请重新选择${PLAIN}" && sleep 1 ;;
+        esac
+    done
 }
 
 main_menu
